@@ -44,7 +44,7 @@ docker run --name tripoptimize-pg -e POSTGRES_PASSWORD=postgres \
 
 ```bash
 # 1. Клонирование
-git clone <repository-url> TripOptimize
+git clone git@github.com:qu0llk/TripOptimize.git
 cd TripOptimize
 
 # 2. Виртуальное окружение
