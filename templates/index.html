@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<!-- Главный одностраничный интерфейс TripOptimizer (Модуль 7B).
+     Только стандартные веб-технологии: HTML5, Tailwind через CDN и
+     ванильный JavaScript. Никаких сборщиков, NPM и фреймворков. -->
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TripOptimizer — оптимизатор маршрутов путешествий</title>
+
+  <!-- Tailwind CSS из CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Палитра «Mossy Hollow» — фирменные цвета проекта.
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            moss: {
+              dark: "#3D4127",  // тёмные акценты и текст
+              olive: "#636B2F", // основной фон/кнопки
+              sage: "#BAC095",  // вторичные разделители
+              soft: "#D4DE95",  // мягкие подсветки
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="/static/styles.css" />
+
+  <!-- Компонентные классы через @apply: CDN-сборка Tailwind обрабатывает
+       @apply только в инлайновом блоке type="text/tailwindcss". -->
+  <style type="text/tailwindcss">
+    .field-label {
+      @apply block text-xs font-semibold text-moss-olive mb-1;
+    }
+    .field-input {
+      @apply w-full border border-moss-sage rounded-lg px-3 py-2 bg-white
+             focus:outline-none focus:ring-2 focus:ring-moss-olive;
+    }
+    .chip {
+      @apply flex items-center gap-1 text-sm border border-moss-sage rounded-lg
+             px-2 py-1 cursor-pointer;
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-moss-soft/30 text-moss-dark">
+  <!-- ШАПКА с диагональной геометрической маской -->
+  <header class="diagonal-mask bg-moss-olive text-moss-soft px-6 py-10 shadow-lg">
+    <div class="max-w-6xl mx-auto flex items-center gap-3">
+      <span class="geo-badge"></span>
+      <h1 class="text-4xl font-extrabold tracking-tight">TripOptimizer</h1>
+    </div>
+    <p class="max-w-6xl mx-auto mt-2 text-moss-sage">
+      Оптимальный маршрут путешествия по нескольким городам — дёшево или быстро.
+    </p>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8 space-y-8">
+    <!-- ===================== ФОРМА ПОИСКА ===================== -->
+    <section id="form-screen">
+      <form id="search-form" class="space-y-6">
+        <!-- Основная строка параметров: 5 полей -->
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 bg-white rounded-2xl p-5 shadow">
+          <div>
+            <label class="field-label">Откуда</label>
+            <input id="origin_city" type="text" required placeholder="Москва"
+                   class="field-input" />
+          </div>
+          <div>
+            <label class="field-label">Куда</label>
+            <input id="destination_city" type="text" required placeholder="Сочи"
+                   class="field-input" />
+          </div>
+          <div>
+            <label class="field-label">Дата отправления</label>
+            <input id="start_date" type="date" required class="field-input" />
+          </div>
+          <div>
+            <label class="field-label">Запас дней</label>
+            <input id="surplus_days" type="number" min="0" value="0" class="field-input" />
+          </div>
+
+          <!-- Кастомный выпадающий блок «Фильтры» -->
+          <div class="relative">
+            <label class="field-label">Фильтры</label>
+            <button type="button" id="filters-toggle" class="field-input text-left flex justify-between items-center">
+              <span>Фильтры</span><span class="text-moss-olive">▾</span>
+            </button>
+
+            <!-- Поповер фильтров -->
+            <div id="filters-popover"
+                 class="hidden absolute z-20 mt-2 w-72 right-0 bg-white rounded-xl shadow-xl border border-moss-sage p-4 space-y-4">
+              <div>
+                <span class="field-label">Транспорт</span>
+                <div class="flex gap-2 mt-1">
+                  <label class="chip"><input type="radio" name="transport" value="both" checked /> Любой</label>
+                  <label class="chip"><input type="radio" name="transport" value="plane" /> Самолёт</label>
+                  <label class="chip"><input type="radio" name="transport" value="train" /> Поезд</label>
+                </div>
+              </div>
+              <label class="flex items-center justify-between">
+                <span class="field-label">Только с багажом</span>
+                <input id="require_baggage" type="checkbox" class="w-5 h-5 accent-moss-olive" />
+              </label>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <span class="field-label">Бюджет от</span>
+                  <input id="min_budget" type="number" min="0" placeholder="0" class="field-input" />
+                </div>
+                <div>
+                  <span class="field-label">Бюджет до</span>
+                  <input id="max_budget" type="number" min="0" placeholder="∞" class="field-input" />
+                </div>
+              </div>
+              <div>
+                <span class="field-label">Оптимизация</span>
+                <div class="flex gap-2 mt-1">
+                  <label class="chip"><input type="radio" name="metric" value="money" checked /> Деньги</label>
+                  <label class="chip"><input type="radio" name="metric" value="time" /> Время</label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Таблица промежуточных городов -->
+        <div class="bg-white rounded-2xl p-5 shadow">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-bold text-lg">Промежуточные города</h2>
+            <button type="button" id="add-city"
+                    class="bg-moss-olive text-moss-soft px-4 py-2 rounded-lg hover:bg-moss-dark transition">
+              + Добавить больше городов
+            </button>
+          </div>
+          <div class="grid grid-cols-[1fr_220px_44px] gap-3 px-1 pb-2 text-sm font-semibold text-moss-olive">
+            <span>Город</span><span>Количество дней</span><span></span>
+          </div>
+          <div id="cities-body" class="space-y-2"></div>
+
+          <!-- Блок предупреждения о превышении лимита в 31 день -->
+          <div id="days-warning"
+               class="hidden mt-4 bg-red-100 border border-red-400 text-red-700 rounded-lg px-4 py-3">
+            ⚠ Суммарная длительность поездки превышает 31 день. Уменьшите число дней.
+          </div>
+        </div>
+
+        <button type="submit" id="submit-btn"
+                class="w-full bg-moss-dark text-moss-soft text-lg font-bold py-4 rounded-2xl shadow-lg hover:bg-moss-olive transition">
+          Подобрать маршрут
+        </button>
+      </form>
+    </section>
+
+    <!-- ===================== ЭКРАН ЗАГРУЗКИ ===================== -->
+    <section id="loading-screen" class="hidden">
+      <div class="bg-white rounded-2xl p-6 shadow space-y-4">
+        <div class="flex items-center justify-between">
+          <span id="progress-text" class="font-bold text-lg">Парсинг билетов: 0%</span>
+          <span id="progress-status" class="text-moss-olive text-sm">PENDING</span>
+        </div>
+        <!-- Гибридный индикатор: прогресс-бар + текстовый процент -->
+        <div class="w-full h-4 bg-moss-sage/40 rounded-full overflow-hidden">
+          <div id="progress-bar" class="h-full bg-moss-olive transition-all duration-500" style="width:0%"></div>
+        </div>
+      </div>
+      <!-- Скелетоны билетов: столько, сколько ожидается плеч маршрута -->
+      <div id="skeletons" class="mt-6 space-y-4"></div>
+    </section>
+
+    <!-- ===================== РЕЗУЛЬТАТЫ ===================== -->
+    <section id="results-screen" class="hidden">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-2xl font-bold">Ваш маршрут</h2>
+        <button id="restart-btn" class="text-moss-olive underline">← Новый поиск</button>
+      </div>
+      <div id="route-summary" class="mb-4 text-moss-dark"></div>
+      <div id="tickets" class="space-y-4"></div>
+      <div id="error-block"
+           class="hidden bg-red-100 border border-red-400 text-red-700 rounded-lg px-4 py-3"></div>
+    </section>
+  </main>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>

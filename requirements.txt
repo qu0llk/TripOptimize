@@ -1,0 +1,20 @@
+patchright
+python-dotenv==1.0.1
+pydantic==2.9.2
+
+# Модуль 3 — БД: асинхронный SQLAlchemy + драйвер asyncpg для PostgreSQL.
+# Экстра [asyncio] подтягивает greenlet, необходимый для async-режима.
+SQLAlchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+
+# Модуль 4 — оркестрация: FastAPI как тонкий API-мост к очереди задач.
+# Очередь — нативная asyncio.Queue, без Celery/Redis (целевой масштаб мал).
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Модуль 7B — фронтенд: Jinja2 для отдачи HTML-шаблона интерфейса.
+# Статика (Vanilla JS/CSS) отдаётся StaticFiles; сборщики/NPM не используются.
+jinja2==3.1.4
+
+# Модуль 6 — Telegram-бот на aiogram 3.x (FSM, инлайн-клавиатуры, long-polling).
+aiogram==3.13.1

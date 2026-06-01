@@ -1,0 +1,56 @@
+/* Дополнительные стили фронтенда TripOptimizer (Модуль 7B).
+   Базовая стилизация — Tailwind через CDN; здесь только то, чего нет в утилитах:
+   геометрические маски, переиспользуемые классы полей и анимация скелетонов. */
+
+/* Диагональная маска шапки — «чистая геометрия» поверх оливкового фона. */
+.diagonal-mask {
+  clip-path: polygon(0 0, 100% 0, 100% 85%, 0 100%);
+}
+
+/* Декоративный геометрический значок-ромб рядом с логотипом. */
+.geo-badge {
+  width: 28px;
+  height: 28px;
+  background: #D4DE95; /* moss.soft */
+  transform: rotate(45deg);
+  border-radius: 6px;
+  display: inline-block;
+}
+
+/* Примечание: классы .field-input/.field-label/.chip объявлены через @apply
+   в инлайновом <style type="text/tailwindcss"> внутри index.html — CDN-сборка
+   Tailwind обрабатывает @apply только там, не во внешних CSS-файлах. */
+
+/* --- Анимация скелетонов (мерцание серых плейсхолдеров) --- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e5e7eb;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.6),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Кликабельная карточка билета — лёгкое поднятие при наведении. */
+.ticket-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.ticket-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px rgba(61, 65, 39, 0.18);
+}

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<!-- Админ-панель TripOptimizer (Модуль 7C): телеметрия, статусы задач,
+     здоровье скраперов и очистка кэша. Только HTML5 + Tailwind (CDN) + ваниль. -->
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TripOptimizer — Админ-панель</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { moss: {
+        dark: "#3D4127", olive: "#636B2F", sage: "#BAC095", soft: "#D4DE95",
+      } } } },
+    };
+  </script>
+</head>
+
+<body class="min-h-screen bg-moss-soft/30 text-moss-dark">
+  <header class="bg-moss-olive text-moss-soft px-6 py-6 shadow">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <h1 class="text-2xl font-extrabold">TripOptimizer · Админ-панель</h1>
+      <a href="/" class="text-moss-sage underline text-sm">← На главную</a>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8 space-y-8">
+    <!-- 1. Карточки телеметрии («Budget Saver») -->
+    <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="bg-white rounded-2xl p-5 shadow">
+        <div class="text-sm text-moss-olive">Всего запросов</div>
+        <div id="m-total" class="text-3xl font-extrabold mt-1">—</div>
+      </div>
+      <div class="bg-white rounded-2xl p-5 shadow">
+        <div class="text-sm text-moss-olive">Активные задачи</div>
+        <div id="m-active" class="text-3xl font-extrabold mt-1">—</div>
+      </div>
+      <div class="bg-moss-soft rounded-2xl p-5 shadow">
+        <div class="text-sm text-moss-olive">Экономия бюджета (кэш-хиты)</div>
+        <div id="m-hits" class="text-3xl font-extrabold mt-1">—</div>
+      </div>
+      <div class="bg-white rounded-2xl p-5 shadow">
+        <div class="text-sm text-moss-olive">Размер базы кэша</div>
+        <div id="m-cache" class="text-3xl font-extrabold mt-1">—</div>
+      </div>
+    </section>
+
+    <!-- 3. Трекер здоровья скраперов -->
+    <section class="bg-white rounded-2xl p-5 shadow">
+      <h2 class="font-bold text-lg mb-3">Здоровье скраперов (анти-бот монитор)</h2>
+      <div id="scrapers" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div class="text-moss-olive">Загрузка…</div>
+      </div>
+    </section>
+
+    <!-- 4. Очистка устаревшего кэша -->
+    <section class="flex items-center gap-4">
+      <button id="purge-btn"
+              class="bg-moss-dark text-moss-soft px-5 py-3 rounded-xl font-semibold hover:bg-moss-olive transition">
+        Очистить устаревший кэш
+      </button>
+      <span id="purge-result" class="text-sm text-moss-olive"></span>
+    </section>
+
+    <!-- 2. Таблица статусов задач -->
+    <section class="bg-white rounded-2xl p-5 shadow overflow-x-auto">
+      <h2 class="font-bold text-lg mb-3">Последние задачи</h2>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-moss-olive border-b border-moss-sage">
+            <th class="py-2 pr-3">ID</th>
+            <th class="py-2 pr-3">Время создания</th>
+            <th class="py-2 pr-3">Статус</th>
+            <th class="py-2 pr-3">Маршрут</th>
+            <th class="py-2 pr-3">Метрика</th>
+            <th class="py-2">Лог ошибки</th>
+          </tr>
+        </thead>
+        <tbody id="tasks-body"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/static/admin.js"></script>
+</body>
+</html>

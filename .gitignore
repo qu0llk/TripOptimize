@@ -1,0 +1,28 @@
+# Секреты окружения
+.env
+.env.local
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Python артефакты
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Логи и отладочные дампы
+logs/
+*.log
+trace/
+*.har
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+.vexp
