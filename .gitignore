@@ -2,6 +2,11 @@
 .env
 .env.local
 
+# ИИ модели и их артефакты
+.vexp
+.claude
+.codex
+
 # Виртуальные окружения
 .venv/
 venv/
@@ -25,4 +30,3 @@ trace/
 .idea/
 .vscode/
 .DS_Store
-.vexp

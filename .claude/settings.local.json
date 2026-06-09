@@ -49,7 +49,21 @@
       "Bash(PYTHONPATH=. .venv/bin/python -c ' *)",
       "Bash(grep -v \"^$\")",
       "Bash(.venv/bin/pip install *)",
-      "Bash(.venv/bin/patchright install *)"
+      "Bash(.venv/bin/patchright install *)",
+      "WebSearch",
+      "Read(//Users/ilyalaptev/Library/Caches/ms-playwright/**)",
+      "Read(//Users/ilyalaptev/.cache/**)",
+      "Bash(python3 -c \"import patchright; print\\('patchright', patchright.__file__\\)\")",
+      "Bash(grep -iA3 \"run\\\\|uvicorn\\\\|start\\\\|launch\")",
+      "Bash(.venv/bin/python -m uvicorn src.api:app --host 127.0.0.1 --port 8077)",
+      "Bash(echo \"started pid $!\")",
+      "Read(//tmp/**)",
+      "Bash(pkill -f \"uvicorn src.api:app\")",
+      "Bash(rm -f scripts/_rzd_probe.py scripts/_tutu_form.py scripts/_tutu_offers.py scripts/_tutu_search.py scripts/_tutu_date.py scripts/_tutu_check.py scripts/_tutu_raw.py)",
+      "Bash(rm -rf _rzd_capture)",
+      "Bash(ps -o pid,etime,command -p 53122)",
+      "Bash(pg_isready -h localhost -p 5433)",
+      "Bash(lsof -nP -iTCP:5433 -sTCP:LISTEN)"
     ]
   }
 }

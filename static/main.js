@@ -238,12 +238,29 @@ function renderResults(result) {
       ${fmtDuration(result.total_duration_minutes || 0)} ·
       оптимизация: ${result.optimization_metric === "time" ? "по времени" : "по деньгам"}
     </div>`;
+  // Если оптимизатор не смог собрать маршрут — выводим общую причину ОТДЕЛЬНО
+  // от карточек плеч, чтобы пользователь сразу видел, что дело не в одной паре.
+  const globalBlock = $("global-reason");
+  if (result.global_reason) {
+    globalBlock.textContent = result.global_reason;
+    globalBlock.classList.remove("hidden");
+  } else {
+    globalBlock.textContent = "";
+    globalBlock.classList.add("hidden");
+  }
 
   const box = $("tickets");
   box.innerHTML = "";
   (result.legs || []).forEach((leg, idx) => {
-    box.appendChild(leg ? ticketCard(leg) : emptyLegCard(idx, result.order));
+    if (leg && leg.__empty__) {
+      box.appendChild(emptyLegCard(idx, result.order, leg.reason));
+    } else {
+      box.appendChild(leg ? ticketCard(leg) : emptyLegCard(idx, result.order));
+    }
   });
+
+  // Дерево перестановок (если оптимизатор его вернул).
+  renderTree(result.tree);
 }
 
 function ticketCard(t) {
@@ -276,12 +293,130 @@ function ticketCard(t) {
   return card;
 }
 
-function emptyLegCard(idx, order) {
-  const card = el("div", "bg-white rounded-2xl p-5 shadow text-moss-dark/60");
+function emptyLegCard(idx, order, reason) {
+  const card = el("div", "bg-white rounded-2xl p-5 shadow text-moss-dark/70");
   const from = order && order[idx] ? order[idx] : "";
   const to = order && order[idx + 1] ? order[idx + 1] : "";
-  card.textContent = `Билеты не найдены: ${from} → ${to}`;
+  const title = el("div", "font-semibold text-moss-dark");
+  title.textContent = `Билеты не найдены: ${from} → ${to}`;
+  card.appendChild(title);
+  if (reason) {
+    const sub = el("div", "text-sm text-moss-dark/60 mt-1");
+    sub.textContent = reason;
+    card.appendChild(sub);
+  }
   return card;
+}
+
+// ==========================================================================
+// Дерево перестановок маршрута
+// ==========================================================================
+// Простая визуализация в виде отступа с цветными «бэйджами» — никаких
+// сторонних либ (d3, cytoscape и т.п.) не нужно. Узлы, ведущие к выбранному
+// маршруту, подсвечены; неполные пути — пунктиром.
+function renderTree(tree) {
+  const section = $("tree-section");
+  const root = $("tree-root");
+  root.innerHTML = "";
+  if (!tree || !tree.root) {
+    section.classList.add("hidden");
+    return;
+  }
+  section.classList.remove("hidden");
+
+  const metric = tree.metric || "money";
+  const isMoney = metric === "money";
+
+  // Верхняя «легенда»: сколько всего вариантов рассмотрено.
+  const totalLine = el("div", "text-xs text-moss-dark/60 mb-2");
+  totalLine.textContent = `Всего вариантов: ${tree.total}`;
+  root.appendChild(totalLine);
+
+  // Контейнер-дерево. Уровни вложенности даются отступами.
+  const list = el("ul", "tree-list");
+  list.style.cssText = "list-style:none;padding-left:0;margin:0;";
+  list.appendChild(buildTreeNode(tree.root, 0, isMoney, true));
+  root.appendChild(list);
+
+  // Кнопка «развернуть/свернуть всё».
+  const btn = $("tree-toggle");
+  let collapsed = false;
+  btn.textContent = "Свернуть все";
+  btn.onclick = () => {
+    collapsed = !collapsed;
+    list.querySelectorAll(".tree-children").forEach((sub) => {
+      sub.style.display = collapsed ? "none" : "";
+    });
+    btn.textContent = collapsed ? "Развернуть все" : "Свернуть все";
+  };
+}
+
+function buildTreeNode(node, depth, isMoney, isRoot) {
+  const li = el("li");
+  li.className = "tree-node";
+
+  // Обёртка узла с отступом по уровню.
+  const wrap = el("div", "flex items-center gap-2 py-1");
+  wrap.style.paddingLeft = `${depth * 22}px`;
+
+  // Линия-коннектор (кроме корня) — вертикальная «рельса» слева от карточки.
+  if (!isRoot) {
+    const connector = el("span");
+    connector.style.cssText =
+      "display:inline-block;width:14px;height:1px;background:#BAC095;";
+    wrap.appendChild(connector);
+  }
+
+  // Бэйдж с названием города.
+  const badge = el("span", "px-2 py-1 rounded-md font-semibold text-sm");
+  if (node.is_chosen) {
+    badge.className += " bg-moss-dark text-moss-soft";
+  } else if (!node.is_complete) {
+    badge.className += " border border-dashed border-moss-olive/50 text-moss-olive/70";
+  } else {
+    badge.className += " bg-moss-sage/60 text-moss-dark";
+  }
+  badge.textContent = node.city;
+  wrap.appendChild(badge);
+
+  // Метрика (цена/длительность лучшего потомка).
+  if (node.preview) {
+    const metricLine = el("span", "text-xs text-moss-dark/70");
+    if (isMoney) {
+      metricLine.textContent = `${node.preview.total_price} ₽`;
+    } else {
+      metricLine.textContent = fmtDuration(node.preview.total_duration_minutes);
+    }
+    if (!node.is_complete) {
+      metricLine.textContent += " · неполный";
+      metricLine.className += " italic";
+    }
+    wrap.appendChild(metricLine);
+  }
+
+  // Tooltip с полным маршрутом.
+  if (node.preview && node.preview.sequence) {
+    badge.title = node.preview.sequence.join(" → ");
+    if (node.preview) {
+      const t = el("span", "text-xs text-moss-olive/70");
+      t.textContent = ` (${node.preview.sequence.join(" → ")})`;
+      wrap.appendChild(t);
+    }
+  }
+
+  li.appendChild(wrap);
+
+  // Потомки (если есть) — рекурсивно.
+  if (node.children && node.children.length) {
+    const sub = el("ul");
+    sub.style.cssText = "list-style:none;padding-left:0;margin:0;";
+    sub.classList.add("tree-children");
+    node.children.forEach((c) => {
+      sub.appendChild(buildTreeNode(c, depth + 1, isMoney, false));
+    });
+    li.appendChild(sub);
+  }
+  return li;
 }
 
 // ==========================================================================

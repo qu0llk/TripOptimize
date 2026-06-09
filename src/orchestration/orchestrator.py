@@ -396,7 +396,7 @@ class TaskOrchestrator:
             for pair in all_pairs
         }
 
-        best_path, best_sequence = find_optimal_route(
+        best_path, best_sequence, all_permutations = find_optimal_route(
             origin=origin,
             destination=destination,
             intermediates=intermediates,
@@ -405,27 +405,276 @@ class TaskOrchestrator:
             start_date_str=user_inputs.get("start_date") or "",
             surplus_days=surplus_days,
             metric=metric,
+            collect_all=True,
         )
 
         chosen: list[dict[str, Any] | None] = []
         total_price = 0
         total_duration = 0
-        for ticket in best_path:
+        for idx, ticket in enumerate(best_path):
             if ticket is None:
-                chosen.append(None)
+                # Пытаемся дать пользователю понятную причину, чтобы «Билеты
+                # не найдены» не выглядело как сбой системы. Смотрим на пару
+                # городов для текущего плеча в выбранной последовательности.
+                from_city = best_sequence[idx] if idx < len(best_sequence) else "?"
+                to_city = (
+                    best_sequence[idx + 1]
+                    if idx + 1 < len(best_sequence)
+                    else "?"
+                )
+                # Передаём ОБА среза: сырой (после скрапера) и отфильтрованный
+                # (после фильтров пользователя). Это позволяет точно отличить
+                # «билетов нет в принципе» от «все билеты отсеяны фильтрами».
+                raw_tickets = leg_tickets.get((from_city, to_city), [])
+                filtered_tickets = filtered_by_pair.get((from_city, to_city), [])
+                # Если до этого плеча УЖЕ есть успешный билет — это
+                # «последующее» плечо, и частая причина провала — оптимизатор
+                # не нашёл стыковки (билеты есть, но стартуют раньше, чем
+                # прилетает предыдущий поезд). Это надо объяснить отдельно.
+                is_follow_on = any(
+                    isinstance(c, dict) and not c.get("__empty__")
+                    for c in chosen[:idx]
+                )
+                reason = self._explain_empty_leg(
+                    from_city,
+                    to_city,
+                    raw_tickets,
+                    filtered_tickets,
+                    filters,
+                    is_follow_on=is_follow_on,
+                )
+                chosen.append({"__empty__": True, "reason": reason})
                 continue
-            ticket = dataclasses.replace(ticket, booking_url=self._booking.build(ticket))
+            # Скрапер мог уже проставить рабочий deep-link (например, РЖД отдаёт
+            # ссылку на страницу расписания tutu для любого города). Если ссылки
+            # нет — строим её через BookingLinkBuilder (путь Aviasales).
+            booking_url = ticket.booking_url or self._booking.build(ticket)
+            ticket = dataclasses.replace(ticket, booking_url=booking_url)
             chosen.append(ticket.to_dict())
             total_price += ticket.price
             total_duration += ticket.duration_minutes
 
-        return {
+        empty_count = sum(1 for c in chosen if isinstance(c, dict) and c.get("__empty__"))
+        result: dict[str, Any] = {
             "order": best_sequence,
             "optimization_metric": metric,
             "legs": chosen,
             "total_price": total_price,
             "total_duration_minutes": total_duration,
+            "tree": self._build_tree(all_permutations, metric),
         }
+        # Если ВСЕ плечи пустые — даём общую причину, чтобы пользователь
+        # понял, что проблема не в одной паре, а в маршруте целиком (например,
+        # у оптимизатора не нашлось стыковок в окне дат).
+        if chosen and empty_count == len(chosen):
+            result["global_reason"] = self._explain_global_empty(
+                chosen, best_sequence, surplus_days
+            )
+        return result
+
+    @staticmethod
+    def _build_tree(
+        permutations: list[dict[str, Any]], metric: str
+    ) -> dict[str, Any]:
+        """Строит древовидную структуру перестановок для визуализации.
+
+        Корень дерева — город отправления. Каждый уровень — один шаг (город
+        в порядке перестановки). Листья — финальные города. Узлы сортируются
+        по стоимости/длительности (по выбранной метрике), выбранный маршрут
+        помечается флагом ``is_chosen``.
+
+        Returns:
+            Словарь с ``root`` (узел-дерево) и ``metric``.
+        """
+        if not permutations:
+            return {"root": None, "metric": metric, "total": 0}
+
+        def cost_key(node: dict[str, Any]) -> float:
+            """Ключ сортировки по активной метрике (неполные пути — в конец)."""
+            if not node["is_complete"]:
+                # Большое значение, но согласованное для tie-break по цене.
+                return float("inf")
+            if metric == "time":
+                return float(node["total_duration_minutes"])
+            return float(node["total_price"])
+
+        # Группируем по первому промежуточному городу (после origin).
+        # Уровни дерева: 0 = origin, 1 = первый промежуточный, 2 = второй, …
+        # Последний «лист» = destination.
+        origin = permutations[0]["sequence"][0]
+        destination = permutations[0]["sequence"][-1]
+
+        def make_node(city: str, depth: int) -> dict[str, Any]:
+            """Рекурсивно строит узел дерева, начиная с ``city`` на уровне ``depth``."""
+            # Собираем все перестановки, у которых путь на позиции ``depth`` — ``city``.
+            # position[depth] = city, далее идёт суффикс.
+            subseqs = []
+            for p in permutations:
+                seq = p["sequence"]
+                if depth < len(seq) and seq[depth] == city:
+                    subseqs.append(p)
+            # Сортируем потомков (по суффиксу на следующем уровне) по метрике.
+            subseqs.sort(key=cost_key)
+
+            is_leaf = depth + 1 >= len(subseqs[0]["sequence"]) if subseqs else True
+            # Метрики самого узла — берём минимум по его потомкам (если есть),
+            # иначе минимум по текущему уровню.
+            if subseqs:
+                best_metric_value = min(
+                    cost_key(s) for s in subseqs if s["is_complete"]
+                ) if any(s["is_complete"] for s in subseqs) else float("inf")
+                best_incomplete = min(
+                    (s for s in subseqs if not s["is_complete"]),
+                    key=lambda s: (s["total_price"], s["total_duration_minutes"]),
+                    default=None,
+                )
+                is_chosen = any(s.get("is_chosen") for s in subseqs)
+                # Лучший полный потомок (для tooltip'а).
+                best_complete = next(
+                    (s for s in subseqs if s["is_complete"]), None
+                )
+            else:
+                best_metric_value = float("inf")
+                best_incomplete = None
+                is_chosen = False
+                best_complete = None
+
+            children = []
+            if not is_leaf:
+                # Группируем по следующему городу.
+                next_cities = sorted({s["sequence"][depth + 1] for s in subseqs})
+                for nc in next_cities:
+                    children.append(make_node(nc, depth + 1))
+
+            return {
+                "city": city,
+                "is_chosen": is_chosen,
+                "is_complete": bool(best_complete) or (is_leaf and bool(subseqs) and subseqs[0]["is_complete"]),
+                "metric_value": best_metric_value,
+                "preview": (
+                    {
+                        "total_price": best_complete["total_price"],
+                        "total_duration_minutes": best_complete["total_duration_minutes"],
+                        "sequence": best_complete["sequence"],
+                    }
+                    if best_complete
+                    else (
+                        {
+                            "total_price": best_incomplete["total_price"],
+                            "total_duration_minutes": best_incomplete["total_duration_minutes"],
+                            "sequence": best_incomplete["sequence"],
+                        }
+                        if best_incomplete
+                        else None
+                    )
+                ),
+                "children": children,
+            }
+
+        root = make_node(origin, 0)
+        return {
+            "root": root,
+            "destination": destination,
+            "metric": metric,
+            "total": len(permutations),
+        }
+
+    @staticmethod
+    def _explain_global_empty(
+        chosen: list[dict[str, Any]],
+        best_sequence: list[str],
+        surplus_days: int,
+    ) -> str:
+        """Объясняет, почему ВСЕ плечи оказались пустыми.
+
+        Сейчас самая частая причина — оптимизатор не смог «разложить» билеты
+        по дням в пределах запаса. Сообщаем пользователю, что можно попробовать
+        увеличить surplus_days или снять промежуточные города.
+        """
+        # Если ВСЕ причины — "не попадают в окно дат", подсказка про запас.
+        reasons = [c.get("reason", "") for c in chosen]
+        if all("окно дат" in r for r in reasons):
+            return (
+                f"Билеты есть, но оптимизатор не смог уложить маршрут из "
+                f"{len(best_sequence) - 1} плеч в окно "
+                f"start_date + {surplus_days} дн. запаса. "
+                "Попробуйте увеличить surplus_days или убрать промежуточные города."
+            )
+        if all("Нет прямых" in r for r in reasons):
+            return (
+                "Ни на одном плече нет прямого сообщения выбранным видом транспорта."
+            )
+        return "Не удалось собрать полный маршрут — см. причины по каждому плечу."
+
+    @staticmethod
+    def _explain_empty_leg(
+        from_city: str,
+        to_city: str,
+        raw_tickets: list[TicketDTO],
+        filtered_tickets: list[TicketDTO],
+        filters: dict[str, Any],
+        *,
+        is_follow_on: bool = False,
+    ) -> str:
+        """Возвращает человекочитаемую причину отсутствия билета на плече.
+
+        Используется в финальном результате как ``reason`` для пустого плеча —
+        чтобы фронтенд мог показать «нет прямых поездов X→Y» вместо сухого
+        «Билеты не найдены». Не выбрасывает исключений и всегда возвращает
+        строку — это best-effort диагностика.
+
+        Args:
+            from_city / to_city: Концы плеча в выбранной последовательности.
+            raw_tickets: Билеты, отданные скрапером (без фильтров пользователя).
+            filtered_tickets: Те же билеты после применения фильтров.
+                Если raw непуст, а filtered пуст — причина в фильтрах; иначе —
+                в самом маршруте (нет прямого сообщения).
+            is_follow_on: ``True``, если это плечо идёт ПОСЛЕ уже найденного
+                билета. Тогда частая причина провала — билеты есть, но
+                отправляются раньше, чем прилетает предыдущий поезд, и
+                оптимизатор не смог найти стыковку.
+        """
+        # 1) Скрапер не вернул ни одного билета — нет прямого сообщения между
+        #    городами (либо город не резолвится в код РЖД / IATA).
+        if not raw_tickets:
+            return f"Нет прямых поездов {from_city} → {to_city}."
+        # 2) Сырые билеты есть, но все отсеяны фильтрами пользователя.
+        if not filtered_tickets:
+            if (filters.get("transport_type") or "both") != "both":
+                if filters.get("transport_type") == "train":
+                    return (
+                        f"Все билеты {from_city} → {to_city} — не поезд "
+                        "(фильтр: только поезд)."
+                    )
+                if filters.get("transport_type") == "plane":
+                    return (
+                        f"Все билеты {from_city} → {to_city} — не самолёт "
+                        "(фильтр: только самолёт)."
+                    )
+            if filters.get("require_baggage"):
+                return (
+                    f"Все билеты {from_city} → {to_city} отсеяны фильтром «багаж»."
+                )
+            max_budget = filters.get("max_budget")
+            if isinstance(max_budget, int) and max_budget > 0:
+                return (
+                    f"Все билеты {from_city} → {to_city} дороже {max_budget} ₽ "
+                    "(фильтр бюджета)."
+                )
+            return f"Все билеты {from_city} → {to_city} отсеяны фильтрами."
+        # 3) Билеты есть и прошли фильтры, но оптимизатор не смог их
+        #    встроить в маршрут. Две принципиально разные причины —
+        #    объясняем пользователю честно.
+        if is_follow_on:
+            return (
+                f"Поезд {from_city} → {to_city} не успевает на стыковку с "
+                "предыдущим плечом: либо нет рейсов после прилёта, либо "
+                "предыдущий поезд прибывает слишком поздно."
+            )
+        return (
+            f"Билеты {from_city} → {to_city} есть, но оптимизатор не смог "
+            "уложить их в выбранное окно дат. Попробуйте увеличить surplus_days."
+        )
 
     @staticmethod
     def _filter_candidates(

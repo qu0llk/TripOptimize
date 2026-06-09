@@ -4,5 +4,6 @@
 """
 
 from src.bot.service import TripOptimizerService
+from src.bot.states import StateMachine
 
-__all__ = ["TripOptimizerService"]
+__all__ = ["TripOptimizerService", "StateMachine"]

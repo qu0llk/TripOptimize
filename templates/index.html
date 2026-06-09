@@ -177,7 +177,25 @@
         <button id="restart-btn" class="text-moss-olive underline">← Новый поиск</button>
       </div>
       <div id="route-summary" class="mb-4 text-moss-dark"></div>
+      <div id="global-reason" class="hidden mb-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl px-4 py-3 text-sm"></div>
       <div id="tickets" class="space-y-4"></div>
+
+      <!-- Дерево перестановок (все возможные порядки посещения городов) -->
+      <div id="tree-section" class="hidden mt-8">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xl font-bold">Дерево перестановок маршрута</h3>
+          <button id="tree-toggle" class="text-moss-olive underline text-sm">
+            Развернуть все
+          </button>
+        </div>
+        <p class="text-sm text-moss-dark/70 mb-3">
+          Все варианты порядка посещения городов, которые рассмотрел оптимизатор.
+          Выбранный маршрут выделен. Неполные пути (билеты не нашлись на каком-то
+          плече) помечены пунктиром.
+        </p>
+        <div id="tree-root"
+             class="bg-white rounded-2xl p-4 shadow overflow-x-auto"></div>
+      </div>
       <div id="error-block"
            class="hidden bg-red-100 border border-red-400 text-red-700 rounded-lg px-4 py-3"></div>
     </section>
