@@ -93,6 +93,25 @@ async def search_cities(q: str = "") -> list[str]:
     return get_city_catalog().search(q.strip(), limit=10)
 
 
+@app.get("/api/cities/coordinates")
+async def city_coordinates(names: str = "") -> dict[str, list[float] | None]:
+    """Возвращает ``{city: [lat, lon] | null}`` для переданного списка имён.
+
+    Принимает ``names`` — названия городов, разделённые запятой. Используется
+    фронтендом для отрисовки маршрута на карте мира; отдача списком (а не
+    словарём по одному) — чтобы не делать N запросов на N точек маршрута.
+    """
+    catalog = get_city_catalog()
+    out: dict[str, list[float] | None] = {}
+    for raw in names.split(","):
+        name = raw.strip()
+        if not name:
+            continue
+        coords = catalog.coordinates(name)
+        out[name] = list(coords) if coords is not None else None
+    return out
+
+
 @app.post("/api/tasks", status_code=202)
 async def create_task(request: SearchRequest) -> dict[str, str]:
     """Создаёт задачу подбора маршрута и ставит её в очередь оркестратора.

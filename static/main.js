@@ -259,6 +259,12 @@ function renderResults(result) {
     }
   });
 
+  // Карта маршрута: рисует ОБА варианта — по деньгам и по времени — поверх
+  // серой карты мира в палитре сайта. Бэкенд всегда считает оба маршрута;
+  // ``result.money_route``/``result.time_route`` присутствуют начиная с
+  // версии 0.8.0. Если их нет (старый бэкенд) — секция просто скрывается.
+  renderRouteMap(result);
+
   // Дерево перестановок (если оптимизатор его вернул).
   renderTree(result.tree);
 }
@@ -417,6 +423,232 @@ function buildTreeNode(node, depth, isMoney, isRoot) {
     li.appendChild(sub);
   }
   return li;
+}
+
+// ==========================================================================
+// Карта маршрута (D3 + world-atlas TopoJSON, без сборщика)
+// ==========================================================================
+// Карта рисуется один раз (мир не меняется между задачами), а при
+// получении результата на неё накладываются точки городов и две линии
+// маршрута (денежный и временной). Без подписей городов — минималистично,
+// в стилистике сайта. Цвета:
+//
+//   суша ............ moss-sage (#BAC095) на 35% непрозрачности
+//   границы стран ... moss-sage (#BAC095) 60%
+//   океан/фон ....... moss-soft (#D4DE95) — совпадает с body
+//   ваши города ..... moss-dark (#3D4127) — origin и destination
+//   промежуточные ... moss-olive (#636B2F)
+//   линия «по деньгам»  — жёлтый #E5C100
+//   линия «по времени»  — фиолетовый #7E57C2
+//
+// Источник координат — бэкенд ``/api/cities/coordinates`` (cities.json).
+// TopoJSON мира — jsDelivr CDN, версия 110m (≈100 КБ, без городов/озёр).
+const _WORLD_TOPO_URL =
+  "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+
+// Кэш: загружен ли уже TopoJSON и отрендерена ли подложка. Один и тот же
+// фон не нужно перерисовывать при каждом новом поиске — это заметно
+// ускоряет повторные результаты и убирает «мигание» карты.
+let _mapBaseReady = false;
+let _mapBasePromise = null;
+let _landFeature = null;     // кэшированная GeoJSON-проекция суши
+let _countriesFeature = null;
+let _projection = null;       // d3.geoNaturalEarth1, переиспользуется
+
+function _loadWorldBase() {
+  if (_mapBasePromise) return _mapBasePromise;
+  _mapBasePromise = (async () => {
+    const topo = await d3.json(_WORLD_TOPO_URL);
+    // countries-110m.json содержит только country-объекты (без границ озёр);
+    // этого достаточно для наложения маршрута.
+    const countries = topojson.feature(topo, topo.objects.countries);
+    _countriesFeature = countries;
+    // Отдельный «слой» для заливки суши (без границ) — накладываем первым.
+    _landFeature = { type: "FeatureCollection", features: countries.features };
+    return true;
+  })();
+  return _mapBasePromise;
+}
+
+async function renderRouteMap(result) {
+  const section = $("map-section");
+  const svgEl = $("route-map");
+  const warnEl = $("map-warn");
+  // Если бэкенд не вернул оба маршрута — старый API, не рисуем.
+  if (!result || !result.money_route || !result.time_route) {
+    section.classList.add("hidden");
+    return;
+  }
+  section.classList.remove("hidden");
+  warnEl.classList.add("hidden");
+  warnEl.textContent = "";
+
+  // Собираем уникальный список городов по обоим маршрутам.
+  const cities = new Set();
+  for (const r of [result.money_route, result.time_route]) {
+    (r.order || []).forEach((c) => cities.add(c));
+  }
+  if (cities.size < 2) {
+    // Один город — рисовать линию нечего.
+    section.classList.add("hidden");
+    return;
+  }
+
+  // Резолвим координаты пачкой: один запрос к /api/cities/coordinates.
+  let coords;
+  try {
+    const resp = await fetch(
+      `/api/cities/coordinates?names=${encodeURIComponent([...cities].join(","))}`,
+    );
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    coords = await resp.json();
+  } catch (e) {
+    warnEl.textContent =
+      "Не удалось получить координаты городов для карты.";
+    warnEl.classList.remove("hidden");
+    return;
+  }
+
+  // Проверяем, все ли города нашлись в каталоге — если нет, тихо
+  // предупреждаем (без ошибки: карта всё равно нарисуется по тем, что есть).
+  const missing = [...cities].filter((c) => !coords[c]);
+  if (missing.length) {
+    warnEl.textContent = `Координаты не найдены: ${missing.join(", ")}`;
+    warnEl.classList.remove("hidden");
+  }
+
+  // Грузим TopoJSON мира (один раз) и рисуем подложку.
+  try {
+    await _loadWorldBase();
+  } catch (e) {
+    warnEl.textContent = "Не удалось загрузить карту мира.";
+    warnEl.classList.remove("hidden");
+    return;
+  }
+
+  // Проекция Natural Earth I — компромисс между площадями и формой
+  // континентов, отлично смотрится в горизонтальном layout'е.
+  const W = 960;
+  const H = 500;
+  if (!_projection) {
+    _projection = d3.geoNaturalEarth1()
+      .fitSize([W, H], _landFeature);
+  }
+  const path = d3.geoPath(_projection);
+
+  // Рисуем подложку только при первом вызове — последующие поиски просто
+  // обновляют слои маршрута и точек.
+  const svg = d3.select(svgEl);
+  if (!_mapBaseReady) {
+    svg.selectAll("*").remove();
+
+    // Океан/фон — прямоугольник во весь SVG в moss-soft.
+    svg.append("rect")
+      .attr("width", W)
+      .attr("height", H)
+      .attr("fill", "#D4DE95");
+
+    // Суша — один path через все страны, заливка moss-sage 35%.
+    svg.append("g")
+      .attr("class", "land-layer")
+      .selectAll("path")
+      .data(_landFeature.features)
+      .join("path")
+      .attr("d", path)
+      .attr("fill", "#BAC095")
+      .attr("fill-opacity", 0.35)
+      .attr("stroke", "#BAC095")
+      .attr("stroke-opacity", 0.6)
+      .attr("stroke-width", 0.4);
+
+    // Контейнеры для динамических слоёв. Порядок важен: сначала линии
+    // (под точками), потом сами точки поверх линий.
+    svg.append("g").attr("class", "routes-layer");
+    svg.append("g").attr("class", "dots-layer");
+
+    _mapBaseReady = true;
+  } else {
+    // Очищаем только динамические слои, подложку не трогаем.
+    svg.select(".routes-layer").selectAll("*").remove();
+    svg.select(".dots-layer").selectAll("*").remove();
+  }
+
+  // Хелпер: конвертирует [lat, lon] в [x, y] на SVG. Без него d3.geoPath
+  // пришлось бы использовать для одиночных точек, что избыточно.
+  const project = (lat, lon) => _projection([lon, lat]) || [0, 0];
+
+  // Линии маршрута — это дуги большого круга (геодезические), а НЕ
+  // пиксельные сглаженные кривые. d3.geoPath умеет сам: принимает
+  // GeoJSON LineString и возвращает SVG-путь, в котором дуга большого
+  // круга уже разбита на отрезки в проекции. Это решает две проблемы:
+  // 1) линия ГАРАНТИРОВАННО проходит через точки городов (а не «промахивает»
+  //    мимо из-за basis-сглаживания в пиксельном пространстве);
+  // 2) на дальних перелётах (Москва→Нью-Йорк через Атлантику) дуга идёт по
+  //    сфере, а не срезает путь сквозь карту.
+  const geoPath = d3.geoPath(_projection);
+  const routeLineString = (cityNames, c) => ({
+    type: "LineString",
+    // d3.geoPath принимает координаты в порядке [lon, lat].
+    coordinates: cityNames
+      .map((name) => c[name])
+      .filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+      .map(([lat, lon]) => [lon, lat]),
+  });
+
+  // Слой маршрутов.
+  const routesLayer = svg.select(".routes-layer");
+
+  // Денежный маршрут (жёлтый).
+  const moneyLine = routeLineString(result.money_route.order || [], coords);
+  if (moneyLine.coordinates.length >= 2) {
+    routesLayer.append("path")
+      .attr("d", geoPath(moneyLine))
+      .attr("fill", "none")
+      .attr("stroke", "#E5C100")
+      .attr("stroke-width", 2.2)
+      .attr("stroke-linecap", "round")
+      .attr("stroke-linejoin", "round");
+  }
+
+  // Временной маршрут (фиолетовый). Чуть смещён по stroke-dasharray, чтобы
+  // был визуально отличим даже при полном совпадении траектории.
+  const timeLine = routeLineString(result.time_route.order || [], coords);
+  if (timeLine.coordinates.length >= 2) {
+    routesLayer.append("path")
+      .attr("d", geoPath(timeLine))
+      .attr("fill", "none")
+      .attr("stroke", "#7E57C2")
+      .attr("stroke-width", 2.2)
+      .attr("stroke-dasharray", "6 4")
+      .attr("stroke-linecap", "round")
+      .attr("stroke-linejoin", "round");
+  }
+
+  // Точки городов. Origin и destination — moss-dark (тёмные, «якорные»),
+  // всё остальное — moss-olive (промежуточные). Радиус крупнее у якорей,
+  // чтобы они визуально доминировали и пользователь сразу видел «откуда
+  // и куда».
+  const order = result.order || [];
+  const anchorCities = new Set(
+    [order[0], order[order.length - 1]].filter(Boolean),
+  );
+  const dotsLayer = svg.select(".dots-layer");
+  const dots = [];
+  cities.forEach((name) => {
+    const c = coords[name];
+    if (!c) return;
+    const [x, y] = project(c[0], c[1]);
+    dots.push({ name, x, y, anchor: anchorCities.has(name) });
+  });
+  dotsLayer.selectAll("circle")
+    .data(dots)
+    .join("circle")
+    .attr("cx", (d) => d.x)
+    .attr("cy", (d) => d.y)
+    .attr("r", (d) => (d.anchor ? 5 : 3.5))
+    .attr("fill", (d) => (d.anchor ? "#3D4127" : "#636B2F"))
+    .attr("stroke", "#FFFFFF")
+    .attr("stroke-width", 1);
 }
 
 // ==========================================================================

@@ -205,6 +205,17 @@ def view_for(state: State, data: dict[str, Any]) -> tuple[str, InlineKeyboardMar
             ),
         )
 
+    if state == StateMachine.waiting_for_intermediate_days:
+        # Подцикл дней: показываем карточку с клавиатурой «Пропустить».
+        # В обычном сценарии этот экран рисуется из ``view_intermediate_days``
+        # сразу после ввода названия, но сюда можно попасть через «Назад».
+        items = data.get("intermediate_cities", []) or []
+        target = int(data.get("_intermediate_target", 0))
+        last_city = items[-1]["city"] if items else "—"
+        return view_intermediate_days(
+            data, city=last_city, idx=len(items), target=target
+        )
+
     # --- Транспорт -------------------------------------------------------
     if state == StateMachine.waiting_for_transport:
         return (

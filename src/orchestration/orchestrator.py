@@ -33,6 +33,7 @@ from datetime import datetime, time, timezone
 from typing import Any, Callable
 
 from src.config import Settings
+from src.config.cities import get_city_catalog
 from src.database import (
     DatabaseSessionManager,
     TaskRepository,
@@ -364,7 +365,14 @@ class TaskOrchestrator:
         leg_tickets: dict[tuple[str, str], list[TicketDTO]],
         user_inputs: dict[str, Any],
     ) -> dict[str, Any]:
-        """Собирает маршрут через оптимизатор с учётом дней стоя и запаса."""
+        """Собирает маршрут через оптимизатор с учётом дней стоя и запаса.
+
+        Оптимизатор прогоняется ДВАЖДЫ — отдельно по метрике ``money`` и
+        отдельно по ``time`` — чтобы карта на фронтенде могла показать оба
+        варианта (денежный и временной) одним наложением, а не пересчитывать
+        или показывать только выбранный. Дерево перестановок строится для
+        той метрики, которую выбрал пользователь (исходное поведение).
+        """
         from src.optimization.optimizer import find_optimal_route
 
         filters = user_inputs.get("filters") or {}
@@ -396,7 +404,10 @@ class TaskOrchestrator:
             for pair in all_pairs
         }
 
-        best_path, best_sequence, all_permutations = find_optimal_route(
+        # Запускаем TSP дважды: для обеих метрик. Дерево перестановок
+        # строим только для пользовательской метрики (исходное поведение —
+        # оно и так достаточно тяжёлое при >3 промежуточных).
+        money_path, money_seq, money_perms = find_optimal_route(
             origin=origin,
             destination=destination,
             intermediates=intermediates,
@@ -404,73 +415,96 @@ class TaskOrchestrator:
             tickets_by_pair=filtered_by_pair,
             start_date_str=user_inputs.get("start_date") or "",
             surplus_days=surplus_days,
-            metric=metric,
+            metric="money",
+            collect_all=True,
+        )
+        time_path, time_seq, _time_perms = find_optimal_route(
+            origin=origin,
+            destination=destination,
+            intermediates=intermediates,
+            days_by_city=days_by_city,
+            tickets_by_pair=filtered_by_pair,
+            start_date_str=user_inputs.get("start_date") or "",
+            surplus_days=surplus_days,
+            metric="time",
             collect_all=True,
         )
 
-        chosen: list[dict[str, Any] | None] = []
-        total_price = 0
-        total_duration = 0
-        for idx, ticket in enumerate(best_path):
-            if ticket is None:
-                # Пытаемся дать пользователю понятную причину, чтобы «Билеты
-                # не найдены» не выглядело как сбой системы. Смотрим на пару
-                # городов для текущего плеча в выбранной последовательности.
-                from_city = best_sequence[idx] if idx < len(best_sequence) else "?"
-                to_city = (
-                    best_sequence[idx + 1]
-                    if idx + 1 < len(best_sequence)
-                    else "?"
-                )
-                # Передаём ОБА среза: сырой (после скрапера) и отфильтрованный
-                # (после фильтров пользователя). Это позволяет точно отличить
-                # «билетов нет в принципе» от «все билеты отсеяны фильтрами».
-                raw_tickets = leg_tickets.get((from_city, to_city), [])
-                filtered_tickets = filtered_by_pair.get((from_city, to_city), [])
-                # Если до этого плеча УЖЕ есть успешный билет — это
-                # «последующее» плечо, и частая причина провала — оптимизатор
-                # не нашёл стыковки (билеты есть, но стартуют раньше, чем
-                # прилетает предыдущий поезд). Это надо объяснить отдельно.
-                is_follow_on = any(
-                    isinstance(c, dict) and not c.get("__empty__")
-                    for c in chosen[:idx]
-                )
-                reason = self._explain_empty_leg(
-                    from_city,
-                    to_city,
-                    raw_tickets,
-                    filtered_tickets,
-                    filters,
-                    is_follow_on=is_follow_on,
-                )
-                chosen.append({"__empty__": True, "reason": reason})
-                continue
-            # Скрапер мог уже проставить рабочий deep-link (например, РЖД отдаёт
-            # ссылку на страницу расписания tutu для любого города). Если ссылки
-            # нет — строим её через BookingLinkBuilder (путь Aviasales).
-            booking_url = ticket.booking_url or self._booking.build(ticket)
-            ticket = dataclasses.replace(ticket, booking_url=booking_url)
-            chosen.append(ticket.to_dict())
-            total_price += ticket.price
-            total_duration += ticket.duration_minutes
+        money_route = self._serialize_route(
+            money_path, money_seq, leg_tickets, filtered_by_pair, filters
+        )
+        time_route = self._serialize_route(
+            time_path, time_seq, leg_tickets, filtered_by_pair, filters
+        )
 
-        empty_count = sum(1 for c in chosen if isinstance(c, dict) and c.get("__empty__"))
+        # Основной (отображаемый) маршрут — тот, что выбрал пользователь.
+        chosen = money_route if metric == "money" else time_route
+
         result: dict[str, Any] = {
-            "order": best_sequence,
+            "order": chosen["order"],
             "optimization_metric": metric,
-            "legs": chosen,
-            "total_price": total_price,
-            "total_duration_minutes": total_duration,
-            "tree": self._build_tree(all_permutations, metric),
+            "legs": chosen["legs"],
+            "total_price": chosen["total_price"],
+            "total_duration_minutes": chosen["total_duration_minutes"],
+            "tree": self._build_tree(money_perms, metric),
+            # Альтернативный маршрут (по второй метрике) — для карты. Не
+            # рендерится в карточках, чтобы не сбивать пользователя; его
+            # единственный потребитель — визуализация маршрута на карте.
+            "money_route": money_route,
+            "time_route": time_route,
         }
-        # Если ВСЕ плечи пустые — даём общую причину, чтобы пользователь
-        # понял, что проблема не в одной паре, а в маршруте целиком (например,
-        # у оптимизатора не нашлось стыковок в окне дат).
-        if chosen and empty_count == len(chosen):
+        if chosen["empty_count"] and chosen["empty_count"] == len(chosen["legs"]):
             result["global_reason"] = self._explain_global_empty(
-                chosen, best_sequence, surplus_days
+                chosen["legs"], chosen["order"], surplus_days
             )
         return result
+
+    def _serialize_route(
+        self,
+        path: list[TicketDTO | None],
+        sequence: list[str],
+        raw_by_pair: dict[tuple[str, str], list[TicketDTO]],
+        filtered_by_pair: dict[tuple[str, str], list[TicketDTO]],
+        filters: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Превращает результат ``find_optimal_route`` в сериализуемый dict.
+
+        Раньше эта логика жила прямо в :meth:`_assemble_itinerary`; выделена в
+        отдельный метод, чтобы прогонять её дважды (для метрик ``money`` и
+        ``time``) без дублирования.
+        """
+        legs: list[dict[str, Any]] = []
+        total_price = 0
+        total_duration = 0
+        for idx, ticket in enumerate(path):
+            if ticket is None:
+                from_city = sequence[idx] if idx < len(sequence) else "?"
+                to_city = sequence[idx + 1] if idx + 1 < len(sequence) else "?"
+                raw_tickets = raw_by_pair.get((from_city, to_city), [])
+                filtered_tickets = filtered_by_pair.get((from_city, to_city), [])
+                is_follow_on = any(
+                    isinstance(c, dict) and not c.get("__empty__")
+                    for c in legs[:idx]
+                )
+                reason = self._explain_empty_leg(
+                    from_city, to_city, raw_tickets, filtered_tickets, filters,
+                    is_follow_on=is_follow_on,
+                )
+                legs.append({"__empty__": True, "reason": reason})
+                continue
+            booking_url = ticket.booking_url or self._booking.build(ticket)
+            ticket = dataclasses.replace(ticket, booking_url=booking_url)
+            legs.append(ticket.to_dict())
+            total_price += ticket.price
+            total_duration += ticket.duration_minutes
+        empty_count = sum(1 for c in legs if isinstance(c, dict) and c.get("__empty__"))
+        return {
+            "order": list(sequence),
+            "legs": legs,
+            "total_price": total_price,
+            "total_duration_minutes": total_duration,
+            "empty_count": empty_count,
+        }
 
     @staticmethod
     def _build_tree(

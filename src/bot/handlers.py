@@ -201,11 +201,14 @@ async def on_intermediate_city(message: Message, state: FSMContext, bot: Bot) ->
     text, markup = view_intermediate_days(
         await state.get_data(), city=value, idx=idx, target=target
     )
+    # Переходим в подцикл дней, иначе следующее текстовое сообщение
+    # («3», «нет» и т.п.) будет воспринято как имя нового города.
+    await state.set_state(StateMachine.waiting_for_intermediate_days)
     await message.answer(text, reply_markup=markup, parse_mode="Markdown")
 
 
 @router.callback_query(
-    StateMachine.waiting_for_intermediate_city,
+    StateMachine.waiting_for_intermediate_days,
     F.data.startswith(kb.CB_INTERMEDIATE_DONE),
 )
 async def on_intermediate_done(callback: CallbackQuery, state: FSMContext) -> None:
@@ -240,15 +243,16 @@ async def on_intermediate_done(callback: CallbackQuery, state: FSMContext) -> No
         await callback.message.edit_text(text, reply_markup=markup, parse_mode="Markdown")
 
 
-@router.message(StateMachine.waiting_for_intermediate_city)
+@router.message(StateMachine.waiting_for_intermediate_days)
 async def on_intermediate_days_text(
     message: Message, state: FSMContext, bot: Bot
 ) -> None:
     """Текстовый ввод дней (на случай «своей» суммы) — для подцикла дней.
 
     Подцикл дней открыт только в :func:`on_intermediate_city`, где сразу
-    после имени показывается клавиатура с «⏭ Пропустить». На случай
-    ручного ввода обрабатываем и текст здесь.
+    после имени бот переключается в :class:`StateMachine.waiting_for_intermediate_days`
+    и показывает клавиатуру с «⏭ Пропустить». На случай ручного ввода
+    обрабатываем и текст здесь.
     """
     raw = (message.text or "").strip()
     if not raw.isdigit():

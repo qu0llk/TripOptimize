@@ -58,6 +58,10 @@ class CityCatalog:
         self._index: dict[str, tuple[str, bool]] = {}
         # normalized_key → original display name (для автодополнения).
         self._names: dict[str, str] = {}
+        # normalized_key → (lat, lon) для отрисовки карты маршрута. Заполняется
+        # лениво из того же JSON, что и индекс; координаты — публичное поле,
+        # используемое визуализацией маршрута на карте мира.
+        self._coords: dict[str, tuple[float, float]] = {}
         self._load(path)
 
     def _load(self, path: Path) -> None:
@@ -73,6 +77,12 @@ class CityCatalog:
                 continue
             flightable = bool(entry.get("has_flightable_airport"))
             names = [entry.get("name"), entry.get("name_translations", {}).get("en")]
+            coords_raw = entry.get("coordinates") or {}
+            lat = coords_raw.get("lat")
+            lon = coords_raw.get("lon")
+            coords: tuple[float, float] | None = (
+                (float(lat), float(lon)) if lat is not None and lon is not None else None
+            )
             for raw in names:
                 if not raw:
                     continue
@@ -83,6 +93,8 @@ class CityCatalog:
                 if existing is None or (flightable and not existing[1]):
                     self._index[key] = (code, flightable)
                     self._names[key] = raw
+                    if coords is not None:
+                        self._coords[key] = coords
 
         logger.info("Справочник городов загружен: %d ключей", len(self._index))
 
@@ -113,6 +125,19 @@ class CityCatalog:
             return _OVERRIDES[key]
         found = self._index.get(key)
         return found[0] if found else None
+
+    def coordinates(self, city: str) -> tuple[float, float] | None:
+        """Возвращает ``(lat, lon)`` для города или ``None``, если не найден.
+
+        Используется фронтендом для отрисовки маршрута на карте мира.
+        Тот же алгоритм разрешения омонимов, что и в :meth:`resolve_iata`.
+        """
+        key = _normalize(city)
+        if key in _OVERRIDES:
+            # Для омонимов мегаполисов координаты — у агломерации; читаем
+            # напрямую из уже загруженного индекса (он обновлён при _load).
+            return self._coords.get(key)
+        return self._coords.get(key)
 
 
 @lru_cache(maxsize=1)

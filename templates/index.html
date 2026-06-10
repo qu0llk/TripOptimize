@@ -29,6 +29,11 @@
   </script>
   <link rel="stylesheet" href="/static/styles.css" />
 
+  <!-- D3 v7 + world atlas TopoJSON. Грузим с CDN, без сборщика: всё
+       совпадает с духом «vanilla JS» остального фронтенда (Модуль 7B). -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+
   <!-- Компонентные классы через @apply: CDN-сборка Tailwind обрабатывает
        @apply только в инлайновом блоке type="text/tailwindcss". -->
   <style type="text/tailwindcss">
@@ -179,6 +184,38 @@
       <div id="route-summary" class="mb-4 text-moss-dark"></div>
       <div id="global-reason" class="hidden mb-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl px-4 py-3 text-sm"></div>
       <div id="tickets" class="space-y-4"></div>
+
+      <!-- Карта маршрута (Модуль 7B, расширение): мир, красные точки
+           пользовательских городов, синие — промежуточных, жёлтая линия —
+           денежный маршрут, фиолетовая — временной. Без подписей городов. -->
+      <div id="map-section" class="hidden mt-8">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-xl font-bold">Маршрут на карте</h3>
+          <div class="flex items-center gap-4 text-xs text-moss-dark/70">
+            <span class="flex items-center gap-1.5">
+              <span class="inline-block w-3 h-3 rounded-full bg-moss-dark"></span>
+              ваши города
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-block w-3 h-3 rounded-full bg-moss-olive"></span>
+              промежуточные
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-block w-5 h-0.5" style="background:#E5C100"></span>
+              по деньгам
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="inline-block w-5 h-0.5" style="background:#7E57C2"></span>
+              по времени
+            </span>
+          </div>
+        </div>
+        <div class="bg-white rounded-2xl p-4 shadow">
+          <svg id="route-map" viewBox="0 0 960 500" class="w-full h-auto"
+               role="img" aria-label="Карта маршрута путешествия"></svg>
+          <p id="map-warn" class="hidden mt-2 text-xs text-amber-800"></p>
+        </div>
+      </div>
 
       <!-- Дерево перестановок (все возможные порядки посещения городов) -->
       <div id="tree-section" class="hidden mt-8">
